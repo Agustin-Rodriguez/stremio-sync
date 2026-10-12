@@ -1,0 +1,19 @@
+# Copy this file to config.toml and fill it in.
+# config.toml is yours: updated code never overwrites it.
+
+[server]
+ssh = "youruser@192.168.0.100"          # ssh target; key login must work without a password
+incoming = "/mnt/media_1/incoming"      # incoming folder as the server sees it
+
+[stremio]
+# Leave commented out to use Stremio's default location.
+# Single quotes = Windows backslashes are taken literally.
+# cache_dir = 'D:\StremioCache\stremio-cache'
+
+[radarr]
+# Leave api_key empty to skip the import step.
+url = "http://192.168.0.100:7878"
+api_key = ""                            # Radarr -> Settings -> General -> API Key
+incoming = "/data/incoming"             # the incoming folder as Radarr sees it inside Docker
+quality_profile = "Any"
+monitor_new = true                      # Bazarr fetches subtitles for monitored movies by default

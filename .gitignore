@@ -1,0 +1,5 @@
+config.toml
+sent.json
+sent.tmp
+*.log
+__pycache__/
