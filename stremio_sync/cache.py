@@ -2,12 +2,14 @@
 
 import os
 import platform
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .bencode import bdecode
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov"}
+SERIES_PATTERN = re.compile(r"(s\d{1,2}e\d{1,2}|\d{1,2}x\d{2}|season\s?\d{1,2})", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,17 @@ def torrent_files(info: dict) -> list[tuple[str, int]]:
     return [(info[b"name"].decode("utf-8", "replace"), info[b"length"])]
 
 
+def looks_like_series(files: list[tuple[str, int]]) -> bool:
+    """A season pack (multiple video files), or a filename carrying a season/episode marker."""
+    video_files = [
+        p for p, _ in files
+        if Path(p).suffix.lower() in VIDEO_EXTS and "sample" not in p.lower()
+    ]
+    if len(video_files) > 1:
+        return True
+    return any(SERIES_PATTERN.search(p) for p in video_files)
+
+
 def pick_movie(files):
     """Largest video file that isn't a sample: (index, path, length), or None."""
     candidates = [
@@ -94,6 +107,9 @@ def scan_entry(folder: Path) -> CacheEntry | Skipped:
         files = torrent_files(info)
     except (ValueError, KeyError, TypeError, IndexError, AttributeError) as e:
         return Skipped(folder.name, f"unreadable metadata ({e!r})")
+
+    if looks_like_series(files):
+        return Skipped(folder.name, "looks like a series, skipping")
 
     movie = pick_movie(files)
     if movie is None:
