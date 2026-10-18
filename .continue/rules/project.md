@@ -6,15 +6,21 @@ alwaysApply: true
 # stremio-sync
 Copies fully downloaded movies from Stremio's torrent cache (Windows) to a home
 server over ssh/scp, then asks Radarr to import them. Movies only; series are skipped.
+Runs either as a one-shot CLI or as a tray app (`--tray`) that watches the cache.
 
 ## Hard rules
-- Python 3.11+, **standard library only**. Never add dependencies.
-- Runs under `pythonw.exe` from Task Scheduler, so `sys.stdout` can be `None`.
+- Python 3.11+, standard library plus the packages in `requirements.txt` (pystray, Pillow,
+  watchdog). Only the tray modules import them; the CLI must keep working without them.
+  Don't add more without asking.
+- Runs under `pythonw.exe` (tray app, Task Scheduler), so `sys.stdout` can be `None`.
   Never `print`; use `logging.getLogger(__name__)` with %-style args, not f-strings.
 - DEBUG goes to the console only; INFO and up also go to the log file.
 - ssh/scp through `subprocess` (Windows' built-in OpenSSH).
 - One failed movie must not stop the run. Raise the module's own exception
-  (`ConfigError`, `TransferError`, `RadarrError`); `pipeline.py` catches, logs, counts.
+  (`ConfigError`, `TransferError`, `RadarrError`, `StagingError`); `pipeline.py` and
+  `engine.py` catch, log, count.
+- Tray threading: tkinter owns the main thread, pystray runs detached, the engine has its
+  own worker thread. Other threads hand tk work to the main thread through the tray's queue.
 - Save progress after each file (`sent.mark(entry)`). Write files atomically
   (temp file, then `os.replace`).
 - Never edit `config.toml`, `sent.json` or `*.log`. Change `config.toml.example`
@@ -30,6 +36,9 @@ Code lives in `stremio_sync/`, entry point is `sync.py`.
 - `state.py`: `sent.json`, what's already sent
 - `transfer.py`: ssh/scp upload
 - `radarr.py`: Radarr API
+- `tray.py`: tray icon and menu; `window.py`: "Show movies" window; `autostart.py`: Run key
+- `engine.py`: tray worker (watch, stage, verify, send, import)
+- `staging.py`: hard links that outlive Stremio's cache cleanup; `verify.py`: piece hashes
 
 ## Style
 Small modules, short functions, type hints, one-line module docstrings. Sparse

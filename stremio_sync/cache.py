@@ -93,6 +93,12 @@ def count_have(bitfield: bytes, first: int, last: int) -> int:
     return have
 
 
+def read_info(folder: Path) -> dict:
+    """The torrent's info dict, from the folder's `cache` file. Raises ValueError if malformed."""
+    meta = bdecode((folder / "cache").read_bytes())
+    return meta.get(b"info", meta)
+
+
 def scan_entry(folder: Path) -> CacheEntry | Skipped:
     cache, bitfield_path = folder / "cache", folder / "bitfield"
     if not cache.is_file():
@@ -101,8 +107,7 @@ def scan_entry(folder: Path) -> CacheEntry | Skipped:
         return Skipped(folder.name, "no bitfield")
 
     try:
-        meta = bdecode(cache.read_bytes())
-        info = meta.get(b"info", meta)
+        info = read_info(folder)
         piece_len = info[b"piece length"]
         files = torrent_files(info)
     except (ValueError, KeyError, TypeError, IndexError, AttributeError) as e:

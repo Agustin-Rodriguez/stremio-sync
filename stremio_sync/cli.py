@@ -39,12 +39,15 @@ def main(argv=None):
         description="Send finished Stremio downloads to the home server and import them into Radarr.",
     )
     ap.add_argument("--send", action="store_true", help="actually copy READY files and run the Radarr import")
+    ap.add_argument("--tray", action="store_true", help="run as a Windows tray app that watches the cache (see README)")
     ap.add_argument("--config", type=Path, default=CONFIG_FILE, help="config file (default: config.toml next to sync.py)")
     ap.add_argument("--log", type=Path, metavar="FILE", help="also append results to FILE, with timestamps")
     ap.add_argument("--cache-dir", type=Path, help="override [stremio] cache_dir")
     ap.add_argument("--server", help="override [server] ssh")
     ap.add_argument("--dest", help="override [server] incoming")
     args = ap.parse_args(argv)
+    if args.tray and not args.log:
+        args.log = args.config.resolve().parent / "sync.log"  # so the tray's "Open log" always has a file
 
     log = setup_logging(args.log)
     try:
@@ -60,4 +63,8 @@ def main(argv=None):
         log.error("Cache folder not found: %s (set [stremio] cache_dir in config.toml)", cfg.cache_dir)
         sys.exit(2)
 
+    if args.tray:
+        from .tray import main as tray_main  # needs the packages in requirements.txt; the CLI doesn't
+        tray_main(cfg, args.config, args.log)
+        return
     sys.exit(1 if run(cfg, send_files=args.send) else 0)

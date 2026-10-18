@@ -37,6 +37,23 @@ def find_ready(cfg: Config, sent: SentLog) -> list[CacheEntry]:
     return ready
 
 
+def send_one(entry: CacheEntry, cfg: Config, sent: SentLog) -> str | None:
+    """Send one entry and mark it in sent.json. Returns 'sent', 'exists', or None if it failed."""
+    start = time.monotonic()
+    try:
+        outcome = send(entry, cfg.ssh_target, cfg.server_incoming)
+    except TransferError as e:
+        log.error("  FAILED: %s", e)
+        return None
+    if outcome == "sent":
+        secs = max(time.monotonic() - start, 0.001)
+        log.info("  done in %s  (%.1f MB/s)", fmt_duration(secs), entry.size / secs / 1e6)
+    else:
+        log.info("  already on server, marking as sent")
+    sent.mark(entry)  # after each file, so a later failure doesn't lose progress
+    return outcome
+
+
 def send_all(entries: list[CacheEntry], cfg: Config, sent: SentLog) -> int:
     """Send entries to the server, marking each in sent.json. Returns the number of failures."""
     if not entries:
@@ -49,35 +66,30 @@ def send_all(entries: list[CacheEntry], cfg: Config, sent: SentLog) -> int:
     run_start = time.monotonic()
     for n, entry in enumerate(entries, 1):
         log.info("\n[%d/%d] %s  (%.2f GB)", n, len(entries), entry.name, entry.size / 1e9)
-        start = time.monotonic()
-        try:
-            outcome = send(entry, cfg.ssh_target, cfg.server_incoming)
-        except TransferError as e:
+        outcome = send_one(entry, cfg, sent)
+        if outcome is None:
             failures += 1
-            log.error("  FAILED: %s", e)
-            continue
-        if outcome == "sent":
-            secs = max(time.monotonic() - start, 0.001)
+        elif outcome == "sent":
             sent_bytes += entry.size
-            log.info("  done in %s  (%.1f MB/s)", fmt_duration(secs), entry.size / secs / 1e6)
-        else:
-            log.info("  already on server, marking as sent")
-        sent.mark(entry)  # after each file, so a later failure doesn't lose progress
 
     log.info("\n%d sent, %d failed. %.2f GB in %s.", len(entries) - failures, failures,
              sent_bytes / 1e9, fmt_duration(time.monotonic() - run_start))
     return failures
 
 
-def import_into_radarr(cfg: Config) -> int:
+def import_into_radarr(cfg: Config, sent: SentLog) -> int:
+    """Run the Radarr import and record what it imported. Returns the number of problems."""
     if cfg.radarr is None:
         log.debug("\nRadarr not configured in config.toml, skipping import.")
         return 0
     try:
-        return Radarr(cfg.radarr).import_incoming()
+        problems, imported = Radarr(cfg.radarr).import_incoming()
     except RadarrError as e:
         log.error("\nRadarr import failed: %s", e)
         return 1
+    if imported:
+        sent.mark_imported(imported)
+    return problems
 
 
 def run(cfg: Config, send_files: bool) -> int:
@@ -87,4 +99,4 @@ def run(cfg: Config, send_files: bool) -> int:
     if not send_files:
         log.info("\n%d file(s) would be sent. Run with --send to copy them.", len(ready))
         return 0
-    return send_all(ready, cfg, sent) + import_into_radarr(cfg)
+    return send_all(ready, cfg, sent) + import_into_radarr(cfg, sent)

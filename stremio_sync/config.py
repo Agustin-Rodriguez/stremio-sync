@@ -29,6 +29,7 @@ class Config:
     server_incoming: str      # incoming folder as the server sees it
     cache_dir: Path
     state_file: Path          # sent.json, kept next to config.toml
+    staging_dir: Path | None  # tray app's hard links; None = next to the cache folder
     radarr: RadarrConfig | None  # None = skip the import step
 
 
@@ -44,6 +45,7 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
     server = raw.get("server", {})
     stremio = raw.get("stremio", {})
     r = raw.get("radarr", {})
+    staging = raw.get("staging", {})
 
     radarr = None
     if r.get("api_key") and r.get("incoming"):
@@ -60,5 +62,6 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
         server_incoming=server.get("incoming", "/mnt/media_1/incoming").rstrip("/"),
         cache_dir=Path(stremio["cache_dir"]) if stremio.get("cache_dir") else default_cache_dir(),
         state_file=path.resolve().parent / "sent.json",
+        staging_dir=Path(staging["dir"]) if staging.get("dir") else None,
         radarr=radarr,
     )

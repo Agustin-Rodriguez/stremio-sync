@@ -10,6 +10,12 @@ incoming = "/mnt/media_1/incoming"      # incoming folder as the server sees it
 # Single quotes = Windows backslashes are taken literally.
 # cache_dir = 'D:\StremioCache\stremio-cache'
 
+[staging]
+# Tray app only: where it keeps hard links to movies until Radarr imports them,
+# so Stremio clearing its cache doesn't lose them. Must be on the same drive as the cache.
+# Leave commented out to use a "stremio-sync-staging" folder next to the cache.
+# dir = 'D:\StremioCache\stremio-sync-staging'
+
 [radarr]
 # Leave api_key empty to skip the import step.
 url = "http://192.168.0.100:7878"

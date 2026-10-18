@@ -107,16 +107,16 @@ class Radarr:
             time.sleep(2)
         return "timed out"
 
-    def import_incoming(self) -> int:
-        """Import every movie file in incoming, this run's and leftovers. Returns the number of problems."""
+    def import_incoming(self) -> tuple[int, set[str]]:
+        """Import every movie file in incoming, this run's and leftovers. Returns (problems, imported file names)."""
         listing = {"folder": self.cfg.incoming, "filterExistingFiles": "true"}
         items = self.request("GET", "manualimport", listing) or []
         if not items:
             log.debug("\nRadarr: nothing waiting in %s", self.cfg.incoming)
-            return 0
+            return 0, set()
         log.info("\nRadarr: %d file(s) waiting in %s", len(items), self.cfg.incoming)
 
-        files, problems = [], 0
+        files, problems, imported = [], 0, set()
         for item in items:
             name = item["path"].rsplit("/", 1)[-1]
             try:
@@ -156,5 +156,6 @@ class Radarr:
                     problems += 1
                     log.error("  FAILED    %s (import %s; see Radarr -> System -> Logs)", name, status)
                 else:
+                    imported.add(name)
                     log.info("  imported  %s", name)
-        return problems
+        return problems, imported
