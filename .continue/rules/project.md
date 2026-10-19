@@ -38,6 +38,7 @@ Code lives in `stremio_sync/`, entry point is `sync.py`.
 - `radarr.py`: Radarr API
 - `tray.py`: tray icon and menu; `window.py`: "Show movies" window; `autostart.py`: Run key
 - `engine.py`: tray worker (watch, stage, verify, send, import)
+- `progress.py`: per-movie state for the window's In progress tab
 - `staging.py`: hard links that outlive Stremio's cache cleanup; `verify.py`: piece hashes
 
 ## Style

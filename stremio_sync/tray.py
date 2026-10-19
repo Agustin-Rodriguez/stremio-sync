@@ -30,11 +30,20 @@ _mutex = None  # held for the life of the process
 
 
 def icon_image(color: str) -> Image.Image:
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    # Drawn large so Windows downscales a sharp source at any DPI.
+    img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.ellipse((4, 4, 60, 60), fill=color, outline="white", width=4)
-    draw.polygon([(26, 20), (26, 44), (46, 32)], fill="white")  # a play triangle
+    draw.ellipse((16, 16, 240, 240), fill=color, outline="white", width=16)
+    draw.polygon([(104, 80), (104, 176), (184, 128)], fill="white")  # a play triangle
     return img
+
+
+def dpi_aware():
+    """Draw at the screen's real resolution instead of letting Windows stretch a blurry bitmap."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # system-aware: Tk 8.6 can't rescale per monitor
+    except (AttributeError, OSError):
+        ctypes.windll.user32.SetProcessDPIAware()
 
 
 def single_instance() -> bool:
@@ -50,6 +59,7 @@ def main(cfg: Config, config_path: Path, log_file: Path):
         log.info("Already running, see the tray.")
         return
 
+    dpi_aware()  # before tk or pystray create any window
     root = tk.Tk()
     root.withdraw()
     tasks: queue.Queue = queue.Queue()  # callables to run on the tk thread
@@ -66,7 +76,7 @@ def main(cfg: Config, config_path: Path, log_file: Path):
     def show_movies():
         nonlocal window
         if window is None or not window.exists():
-            window = MoviesWindow(root, cfg.state_file, lambda: engine.status[1])
+            window = MoviesWindow(root, cfg.state_file, lambda: engine.status[1], engine.progress)
         window.show()
 
     def toggle_autostart():

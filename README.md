@@ -21,6 +21,9 @@ cache instead of running on a timer:
   sends it, has Radarr import it, then deletes the staged copy.
 - Menu: Running / Pause sending (keeps staging, holds uploads) / Stop watching, Sync now,
   Show movies, Open log, Start at login, Quit.
+- Show movies has two tabs. **In progress** lists what the app is doing with each movie
+  (downloading, checking, waiting, sending, waiting for Radarr) and refreshes every 2 s;
+  **Sent** lists what's been sent and whether Radarr imported it.
 
 Turn on "Start at login" and delete the Task Scheduler task, if you had one.
 The log is `sync.log` next to `config.toml` unless you pass `--log`.
@@ -44,7 +47,8 @@ The log gets only what was sent or imported, and any problems.
 | `stremio_sync/radarr.py` | Radarr API: add movies, import from incoming |
 | `stremio_sync/tray.py` | Tray icon and menu |
 | `stremio_sync/engine.py` | Tray app worker: watch, stage, verify, send, import |
+| `stremio_sync/progress.py` | What the worker is doing with each movie, for the In progress tab |
 | `stremio_sync/staging.py` | Hard links that keep movies safe from Stremio's cache cleanup |
 | `stremio_sync/verify.py` | Checks a file against the torrent's piece hashes |
-| `stremio_sync/window.py` | "Show movies" window |
+| `stremio_sync/window.py` | "Show movies" window (In progress, Sent) |
 | `stremio_sync/autostart.py` | Start at login (registry Run key) |

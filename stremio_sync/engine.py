@@ -11,7 +11,8 @@ from watchdog.observers import Observer
 
 from .cache import CacheEntry, Skipped, read_info, scan_entry
 from .config import Config
-from .pipeline import import_into_radarr, send_one
+from .pipeline import fmt_duration, import_into_radarr, send_one
+from .progress import CHECKING, DAMAGED, DOWNLOADING, IMPORTING, UPLOADING, WAITING, Progress
 from .staging import Staging, StagingError, default_staging_dir
 from .state import SentLog
 from .verify import verify
@@ -53,6 +54,7 @@ class Engine:
         self._full_scan = self._retry_import = True
         self._send_after = 0.0
         self._error: str | None = None
+        self._rows = Progress()
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._quit = threading.Event()
@@ -103,6 +105,18 @@ class Engine:
                 self._dirty.add(rel.parts[0])
                 self._last_change = time.monotonic()
             self._wake.set()
+
+    def progress(self) -> list[dict]:
+        """Rows for the window's In progress tab. Safe to call from any thread."""
+        return self._rows.snapshot(self._waiting_reason())
+
+    def _waiting_reason(self) -> str:
+        if not self.cfg.ssh_target:
+            return "no server set"
+        if self.mode != RUNNING:
+            return "paused" if self.mode == PAUSE_SENDING else "stopped"
+        left = self._send_after - time.monotonic()
+        return f"retrying in {fmt_duration(left)}" if left > 0 else "queued"
 
     # --- watching ---
 
@@ -184,20 +198,32 @@ class Engine:
         if isinstance(item, Skipped):
             log.debug("%7s  %s  %s", "skip", item.folder[:12], item.reason)
             item = None
-        if item is not None:
-            if item in self.sent:
-                return 0
+        if item is not None and item not in self.sent:
             try:
                 self.staging.protect(item)
             except StagingError as e:
                 log.error("%s", e)
                 return 1
         staged = self.staging.entry(name)
-        if staged is None or staged in self.sent or staged.key in self._ready:
+        if staged is None:
+            self._rows.untrack(name)
+            return 0
+        if staged.key in self._ready:
+            return 0
+        if staged in self.sent:
+            self._rows.track(staged, IMPORTING)
             return 0
         if item is not None and not item.complete:
+            self._track_download(item)
             return 0
         return self._verify(staged, source_gone=item is None)
+
+    def _track_download(self, item: CacheEntry):
+        try:
+            mtime = item.src.stat().st_mtime
+        except OSError:
+            mtime = time.time()
+        self._rows.track(item, DOWNLOADING, have=item.have, total=item.total, mtime=mtime)
 
     def _verify(self, entry: CacheEntry, source_gone: bool) -> int:
         try:
@@ -207,6 +233,7 @@ class Engine:
         if not source_gone and self._bad.get(entry.key) == mtime:
             return 0  # already failed, and Stremio hasn't written to it since
         self._set_status(BUSY, f"Checking {entry.name}")
+        self._rows.track(entry, CHECKING)
         try:
             ok = verify(entry, read_info(entry.src.parent))
         except ValueError as e:
@@ -214,17 +241,21 @@ class Engine:
             ok = entry.complete
         except OSError as e:
             log.error("Can't read %s: %s", entry.src, e)
+            self._rows.untrack(entry.infohash)
             return 1
         if ok:
             log.info("\nReady: %s", entry.name)
             self._ready[entry.key] = entry
+            self._rows.track(entry, WAITING)
             self._bad.pop(entry.key, None)
             return 0
         if source_gone:
             log.info("\nDropped %s: Stremio removed it before it finished", entry.name)
             self.staging.drop(entry.infohash)
+            self._rows.untrack(entry.infohash)
             return 0
         self._bad[entry.key] = mtime
+        self._rows.track(entry, DAMAGED)
         log.warning("\n%s: Stremio says it's complete but pieces don't match, waiting", entry.name)
         return 1
 
@@ -241,10 +272,13 @@ class Engine:
                 break
             self._set_status(SENDING, f"Sending {entry.name} ({n}/{len(entries)})")
             log.info("\n[%d/%d] %s  (%.2f GB)", n, len(entries), entry.name, entry.size / 1e9)
+            self._rows.track(entry, UPLOADING, started=time.monotonic())
             if send_one(entry, self.cfg, self.sent) is None:
                 self._send_after = time.monotonic() + SEND_RETRY_AFTER
+                self._rows.track(entry, WAITING)
                 return 1, sent_any
             del self._ready[entry.key]
+            self._rows.track(entry, IMPORTING)
             sent_any = True
         return 0, sent_any
 
@@ -261,6 +295,7 @@ class Engine:
             if self.cfg.radarr is None or self.sent.is_imported(e):
                 log.debug("Unstaged %s", e.name)
                 self.staging.drop(e.infohash)
+                self._rows.untrack(e.infohash)
         return problems
 
     # --- status ---
