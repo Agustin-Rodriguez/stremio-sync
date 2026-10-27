@@ -1,4 +1,4 @@
-"""Staging: hard links to movie files, so Stremio clearing its cache doesn't lose them."""
+"""Staging: hard links to movie and episode files, so Stremio clearing its cache doesn't lose them."""
 
 import dataclasses
 import logging
@@ -6,7 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .cache import CacheEntry, Skipped, scan_entry
+from .cache import CacheEntry, scan_folder
 
 log = logging.getLogger(__name__)
 
@@ -27,23 +27,22 @@ def _copy_atomic(src: Path, dst: Path):
 
 
 class Staging:
-    """Each torrent gets a folder laid out like Stremio's: `cache`, `bitfield` (a copy), `<index>` (a hard link)."""
+    """Each torrent gets a folder laid out like Stremio's: `cache`, `bitfield` (a copy), `<index>` (hard links)."""
 
     def __init__(self, root: Path):
         self.root = root
 
-    def entry(self, infohash: str) -> CacheEntry | None:
+    def entries_in(self, infohash: str) -> list[CacheEntry]:
         folder = self.root / infohash
         if not folder.is_dir():
-            return None
-        item = scan_entry(folder)
-        return item if isinstance(item, CacheEntry) else None
+            return []
+        found = scan_folder(folder)
+        return found if isinstance(found, list) else []
 
     def entries(self) -> list[CacheEntry]:
         if not self.root.is_dir():
             return []
-        return [e for e in (scan_entry(p) for p in sorted(self.root.iterdir()) if p.is_dir())
-                if not isinstance(e, Skipped)]
+        return [e for p in sorted(self.root.iterdir()) if p.is_dir() for e in self.entries_in(p.name)]
 
     def protect(self, entry: CacheEntry) -> CacheEntry:
         """Link the entry's data file into staging and refresh the metadata copies. Raises StagingError."""
@@ -56,7 +55,7 @@ class Staging:
                 log.debug("  staged %s", entry.name)
             elif not os.path.samefile(entry.src, link):
                 # Stremio re-created its file. Keep whichever copy has more of the movie.
-                ours = self.entry(entry.infohash)
+                ours = next((e for e in self.entries_in(entry.infohash) if e.key == entry.key), None)
                 if ours is not None and ours.have > entry.have:
                     return ours
                 tmp = link.with_name(link.name + ".tmp")
@@ -70,8 +69,15 @@ class Staging:
                                f"(it must be on the same drive as the cache): {e}") from e
         return dataclasses.replace(entry, src=link)
 
-    def drop(self, infohash: str):
-        shutil.rmtree(self.root / infohash, ignore_errors=True)
+    def drop(self, entry: CacheEntry):
+        """Unstage one file; the folder goes too once no other file from the torrent is left in it."""
+        folder = self.root / entry.infohash
+        try:
+            (folder / str(entry.index)).unlink(missing_ok=True)
+            if not any(p.name.isdigit() for p in folder.iterdir()):
+                shutil.rmtree(folder, ignore_errors=True)
+        except OSError as e:
+            log.debug("Can't unstage %s: %s", entry.name, e)
 
     def count(self) -> int:
         return sum(1 for p in self.root.iterdir() if p.is_dir()) if self.root.is_dir() else 0

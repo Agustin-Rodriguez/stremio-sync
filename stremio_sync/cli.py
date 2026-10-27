@@ -36,15 +36,16 @@ def setup_logging(log_file: Path | None):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="sync.py",
-        description="Send finished Stremio downloads to the home server and import them into Radarr.",
+        description="Send finished Stremio downloads to the home server and import them into Radarr/Sonarr.",
     )
-    ap.add_argument("--send", action="store_true", help="actually copy READY files and run the Radarr import")
+    ap.add_argument("--send", action="store_true", help="actually copy READY files and run the Radarr/Sonarr imports")
     ap.add_argument("--tray", action="store_true", help="run as a Windows tray app that watches the cache (see README)")
     ap.add_argument("--config", type=Path, default=CONFIG_FILE, help="config file (default: config.toml next to sync.py)")
     ap.add_argument("--log", type=Path, metavar="FILE", help="also append results to FILE, with timestamps")
     ap.add_argument("--cache-dir", type=Path, help="override [stremio] cache_dir")
     ap.add_argument("--server", help="override [server] ssh")
     ap.add_argument("--dest", help="override [server] incoming")
+    ap.add_argument("--series-dest", help="override [server] series_incoming")
     args = ap.parse_args(argv)
     if args.tray and not args.log:
         args.log = args.config.resolve().parent / "sync.log"  # so the tray's "Open log" always has a file
@@ -56,7 +57,8 @@ def main(argv=None):
         log.error("%s", e)
         sys.exit(2)
 
-    overrides = {"cache_dir": args.cache_dir, "ssh_target": args.server, "server_incoming": args.dest}
+    overrides = {"cache_dir": args.cache_dir, "ssh_target": args.server, "server_incoming": args.dest,
+                 "server_series_incoming": args.series_dest}
     cfg = dataclasses.replace(cfg, **{k: v for k, v in overrides.items() if v})
 
     if not cfg.cache_dir.is_dir():

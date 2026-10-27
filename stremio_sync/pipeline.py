@@ -1,11 +1,12 @@
-"""One sync pass: scan the cache, send finished movies, import them into Radarr."""
+"""One sync pass: scan the cache, send finished movies and episodes, import them into Radarr and Sonarr."""
 
 import logging
 import time
 
-from .cache import CacheEntry, Skipped, scan_cache
+from .cache import EPISODE, MOVIE, CacheEntry, Skipped, scan_cache
 from .config import Config
 from .radarr import Radarr, RadarrError
+from .sonarr import Sonarr, SonarrError
 from .state import SentLog
 from .transfer import TransferError, send
 
@@ -26,6 +27,9 @@ def find_ready(cfg: Config, sent: SentLog) -> list[CacheEntry]:
         if isinstance(item, Skipped):
             log.debug("%7s  %s  %s", "skip", item.folder[:12], item.reason)
             continue
+        if cfg.dest_for(item) is None:
+            log.debug("%7s  %s  %s  (no [server] series_incoming)", "skip", item.infohash[:12], item.name)
+            continue
         if item in sent:
             status = "sent"
         elif item.complete:
@@ -41,7 +45,7 @@ def send_one(entry: CacheEntry, cfg: Config, sent: SentLog) -> str | None:
     """Send one entry and mark it in sent.json. Returns 'sent', 'exists', or None if it failed."""
     start = time.monotonic()
     try:
-        outcome = send(entry, cfg.ssh_target, cfg.server_incoming)
+        outcome = send(entry, cfg.ssh_target, cfg.dest_for(entry))
     except TransferError as e:
         log.error("  FAILED: %s", e)
         return None
@@ -77,18 +81,27 @@ def send_all(entries: list[CacheEntry], cfg: Config, sent: SentLog) -> int:
     return failures
 
 
-def import_into_radarr(cfg: Config, sent: SentLog) -> int:
-    """Run the Radarr import and record what it imported. Returns the number of problems."""
-    if cfg.radarr is None:
-        log.debug("\nRadarr not configured in config.toml, skipping import.")
-        return 0
-    try:
-        problems, imported = Radarr(cfg.radarr).import_incoming()
-    except RadarrError as e:
-        log.error("\nRadarr import failed: %s", e)
-        return 1
-    if imported:
-        sent.mark_imported(imported)
+IMPORTERS = ((MOVIE, "Radarr", Radarr, RadarrError), (EPISODE, "Sonarr", Sonarr, SonarrError))
+
+
+def import_all(cfg: Config, sent: SentLog, kinds: set[str] = frozenset({MOVIE, EPISODE})) -> int:
+    """Run the Radarr and/or Sonarr import and record what they imported. Returns the number of problems."""
+    problems = 0
+    for kind, name, client, error in IMPORTERS:
+        if kind not in kinds:
+            continue
+        arr = cfg.radarr if kind == MOVIE else cfg.sonarr
+        if arr is None:
+            log.debug("\n%s not configured in config.toml, skipping import.", name)
+            continue
+        try:
+            failed, imported = client(arr).import_incoming()
+        except error as e:
+            log.error("\n%s import failed: %s", name, e)
+            failed, imported = 1, set()
+        if imported:
+            sent.mark_imported(imported)
+        problems += failed
     return problems
 
 
@@ -99,4 +112,4 @@ def run(cfg: Config, send_files: bool) -> int:
     if not send_files:
         log.info("\n%d file(s) would be sent. Run with --send to copy them.", len(ready))
         return 0
-    return send_all(ready, cfg, sent) + import_into_radarr(cfg, sent)
+    return send_all(ready, cfg, sent) + import_all(cfg, sent)

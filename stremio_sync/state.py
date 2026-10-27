@@ -33,12 +33,13 @@ class SentLog:
         self._data[entry.key] = {
             "name": entry.name,
             "size": entry.size,
+            "kind": entry.kind,
             "sent_at": now(),
         }
         self._save()
 
     def mark_imported(self, names: set[str]):
-        """Record that Radarr imported these files (matched by file name)."""
+        """Record that Radarr or Sonarr imported these files (matched by file name)."""
         for rec in self._data.values():
             if rec.get("name") in names and not rec.get("imported_at"):
                 rec["imported_at"] = now()

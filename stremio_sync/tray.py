@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 from . import autostart
 from .config import PROJECT_DIR, Config
 from .engine import BUSY, ERROR, PAUSE_SENDING, RUNNING, SENDING, STOPPED, Engine
-from .window import MoviesWindow
+from .window import DownloadsWindow
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def main(cfg: Config, config_path: Path, log_file: Path):
     root = tk.Tk()
     root.withdraw()
     tasks: queue.Queue = queue.Queue()  # callables to run on the tk thread
-    window: MoviesWindow | None = None
+    window: DownloadsWindow | None = None
     images = {state: icon_image(color) for state, color in COLORS.items()}
 
     def on_status(state: str, text: str):
@@ -73,10 +73,11 @@ def main(cfg: Config, config_path: Path, log_file: Path):
 
     engine = Engine(cfg, on_status)
 
-    def show_movies():
+    def show_downloads():
         nonlocal window
         if window is None or not window.exists():
-            window = MoviesWindow(root, cfg.state_file, lambda: engine.status[1], engine.progress)
+            window = DownloadsWindow(root, cfg.state_file, lambda: engine.status[1], engine.progress,
+                                     series_on=cfg.server_series_incoming is not None)
         window.show()
 
     def toggle_autostart():
@@ -111,7 +112,7 @@ def main(cfg: Config, config_path: Path, log_file: Path):
         mode_item("Stop watching", STOPPED),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sync now", lambda: engine.sync_now()),
-        pystray.MenuItem("Show movies…", lambda: tasks.put(show_movies), default=True),
+        pystray.MenuItem("Show downloads…", lambda: tasks.put(show_downloads), default=True),
         pystray.MenuItem("Open log", lambda: os.startfile(log_file)),
         pystray.MenuItem("Start at login", toggle_autostart, checked=lambda _: autostart.is_enabled()),
         pystray.Menu.SEPARATOR,

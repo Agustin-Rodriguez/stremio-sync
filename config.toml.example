@@ -3,7 +3,9 @@
 
 [server]
 ssh = "youruser@192.168.0.100"          # ssh target; key login must work without a password
-incoming = "/mnt/media_1/incoming"      # incoming folder as the server sees it
+incoming = "/mnt/media_1/incoming"      # incoming folder for movies, as the server sees it
+# Where episodes go. Leave commented out to skip series.
+# series_incoming = "/mnt/media_1/incoming-tv"
 
 [stremio]
 # Leave commented out to use Stremio's default location.
@@ -11,7 +13,7 @@ incoming = "/mnt/media_1/incoming"      # incoming folder as the server sees it
 # cache_dir = 'D:\StremioCache\stremio-cache'
 
 [staging]
-# Tray app only: where it keeps hard links to movies until Radarr imports them,
+# Tray app only: where it keeps hard links to files until Radarr/Sonarr imports them,
 # so Stremio clearing its cache doesn't lose them. Must be on the same drive as the cache.
 # Leave commented out to use a "stremio-sync-staging" folder next to the cache.
 # dir = 'D:\StremioCache\stremio-sync-staging'
@@ -23,3 +25,11 @@ api_key = ""                            # Radarr -> Settings -> General -> API K
 incoming = "/data/incoming"             # the incoming folder as Radarr sees it inside Docker
 quality_profile = "Any"
 monitor_new = true                      # Bazarr fetches subtitles for monitored movies by default
+
+[sonarr]
+# Leave api_key empty to skip the import step for episodes.
+url = "http://192.168.0.100:8989"
+api_key = ""                            # Sonarr -> Settings -> General -> API Key
+incoming = "/data/incoming-tv"          # [server] series_incoming as Sonarr sees it inside Docker
+quality_profile = "Any"
+monitor_new = true                      # monitor shows we add and episodes we import (for Bazarr)

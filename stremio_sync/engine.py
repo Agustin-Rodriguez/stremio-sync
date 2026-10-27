@@ -1,4 +1,4 @@
-"""The tray app's worker: watch Stremio's cache, stage new movies, verify, send and import them."""
+"""The tray app's worker: watch Stremio's cache, stage new movies and episodes, verify, send and import them."""
 
 import logging
 import threading
@@ -9,9 +9,9 @@ from typing import Callable
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from .cache import CacheEntry, Skipped, read_info, scan_entry
+from .cache import MOVIE, CacheEntry, Skipped, read_info, scan_folder
 from .config import Config
-from .pipeline import fmt_duration, import_into_radarr, send_one
+from .pipeline import fmt_duration, import_all, send_one
 from .progress import CHECKING, DAMAGED, DOWNLOADING, IMPORTING, UPLOADING, WAITING, Progress
 from .staging import Staging, StagingError, default_staging_dir
 from .state import SentLog
@@ -193,21 +193,29 @@ class Engine:
         return problems
 
     def _check(self, name: str) -> int:
+        """Stage and check one cache folder's movie or episodes. Returns the number of problems."""
         src = self.cfg.cache_dir / name
-        item = scan_entry(src) if src.is_dir() else None
-        if isinstance(item, Skipped):
-            log.debug("%7s  %s  %s", "skip", item.folder[:12], item.reason)
-            item = None
-        if item is not None and item not in self.sent:
-            try:
-                self.staging.protect(item)
-            except StagingError as e:
-                log.error("%s", e)
-                return 1
-        staged = self.staging.entry(name)
-        if staged is None:
-            self._rows.untrack(name)
-            return 0
+        found = scan_folder(src) if src.is_dir() else []
+        if isinstance(found, Skipped):
+            log.debug("%7s  %s  %s", "skip", found.folder[:12], found.reason)
+            found = []
+        items = {e.key: e for e in found if self.cfg.dest_for(e) is not None}
+        problems = 0
+        for item in items.values():
+            if item not in self.sent:
+                try:
+                    self.staging.protect(item)
+                except StagingError as e:
+                    log.error("%s", e)
+                    problems += 1
+        staged = [e for e in self.staging.entries_in(name) if self.cfg.dest_for(e) is not None]
+        self._rows.untrack_folder(name, keep={e.key for e in staged})
+        for entry in staged:
+            problems += self._check_entry(entry, items.get(entry.key))
+        return problems
+
+    def _check_entry(self, staged: CacheEntry, item: CacheEntry | None) -> int:
+        """`item` is the same file in Stremio's cache, None if Stremio dropped it."""
         if staged.key in self._ready:
             return 0
         if staged in self.sent:
@@ -241,7 +249,7 @@ class Engine:
             ok = entry.complete
         except OSError as e:
             log.error("Can't read %s: %s", entry.src, e)
-            self._rows.untrack(entry.infohash)
+            self._rows.untrack(entry)
             return 1
         if ok:
             log.info("\nReady: %s", entry.name)
@@ -251,8 +259,8 @@ class Engine:
             return 0
         if source_gone:
             log.info("\nDropped %s: Stremio removed it before it finished", entry.name)
-            self.staging.drop(entry.infohash)
-            self._rows.untrack(entry.infohash)
+            self.staging.drop(entry)
+            self._rows.untrack(entry)
             return 0
         self._bad[entry.key] = mtime
         self._rows.track(entry, DAMAGED)
@@ -283,19 +291,21 @@ class Engine:
         return 0, sent_any
 
     def _import_and_clean(self) -> int:
-        """Run the Radarr import, then drop staged copies that are imported (or sent, without Radarr)."""
+        """Run the Radarr/Sonarr imports, then drop staged copies that are imported (or sent, with no importer)."""
         waiting = [e for e in self.staging.entries() if e in self.sent]
         if not waiting:
             return 0
         problems = 0
-        if self.cfg.radarr is not None and not all(self.sent.is_imported(e) for e in waiting):
-            self._set_status(BUSY, "Importing into Radarr")
-            problems = import_into_radarr(self.cfg, self.sent)
+        kinds = {e.kind for e in waiting if self.cfg.arr_for(e) is not None and not self.sent.is_imported(e)}
+        if kinds:
+            names = " and ".join(sorted("Radarr" if k == MOVIE else "Sonarr" for k in kinds))
+            self._set_status(BUSY, f"Importing into {names}")
+            problems = import_all(self.cfg, self.sent, kinds)
         for e in waiting:
-            if self.cfg.radarr is None or self.sent.is_imported(e):
+            if self.cfg.arr_for(e) is None or self.sent.is_imported(e):
                 log.debug("Unstaged %s", e.name)
-                self.staging.drop(e.infohash)
-                self._rows.untrack(e.infohash)
+                self.staging.drop(e)
+                self._rows.untrack(e)
         return problems
 
     # --- status ---
@@ -310,9 +320,9 @@ class Engine:
         elif self.mode == STOPPED:
             self._set_status(STOPPED, "Stopped watching")
         elif self.mode == PAUSE_SENDING:
-            self._set_status(PAUSE_SENDING, f"Sending paused, {len(self._ready)} movie(s) waiting")
+            self._set_status(PAUSE_SENDING, f"Sending paused, {len(self._ready)} file(s) waiting")
         else:
-            self._set_status(RUNNING, "Watching for movies")
+            self._set_status(RUNNING, "Watching the cache")
 
     def _set_status(self, state: str, text: str):
         if (state, text) != self.status:

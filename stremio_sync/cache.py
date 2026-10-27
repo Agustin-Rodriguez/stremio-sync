@@ -1,4 +1,4 @@
-"""Reading Stremio's cache: which movies are in it and how much of each is downloaded."""
+"""Reading Stremio's cache: which movies and episodes are in it and how much of each is downloaded."""
 
 import os
 import platform
@@ -10,11 +10,13 @@ from .bencode import bdecode
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov"}
 SERIES_PATTERN = re.compile(r"(s\d{1,2}e\d{1,2}|\d{1,2}x\d{2}|season\s?\d{1,2})", re.IGNORECASE)
+EPISODE_PATTERN = re.compile(r"(s\d{1,2}e\d{1,3}|\b\d{1,2}x\d{2,3}\b)", re.IGNORECASE)
+MOVIE, EPISODE = "movie", "episode"
 
 
 @dataclass(frozen=True)
 class CacheEntry:
-    """The movie file inside one cached torrent."""
+    """A movie or episode file inside one cached torrent."""
     infohash: str
     index: int    # file number within the torrent, which is also its file name in the cache folder
     src: Path
@@ -22,6 +24,7 @@ class CacheEntry:
     size: int
     have: int     # pieces downloaded, counting only the pieces that cover this file
     total: int
+    kind: str     # MOVIE or EPISODE
 
     @property
     def complete(self) -> bool:
@@ -63,25 +66,13 @@ def torrent_files(info: dict) -> list[tuple[str, int]]:
     return [(info[b"name"].decode("utf-8", "replace"), info[b"length"])]
 
 
-def looks_like_series(files: list[tuple[str, int]]) -> bool:
-    """A season pack (multiple video files), or a filename carrying a season/episode marker."""
-    video_files = [
-        p for p, _ in files
-        if Path(p).suffix.lower() in VIDEO_EXTS and "sample" not in p.lower()
-    ]
-    if len(video_files) > 1:
-        return True
-    return any(SERIES_PATTERN.search(p) for p in video_files)
-
-
-def pick_movie(files):
-    """Largest video file that isn't a sample: (index, path, length), or None."""
-    candidates = [
+def video_files(files: list[tuple[str, int]]) -> list[tuple[int, str, int]]:
+    """(index, path, length) of each video file that isn't a sample."""
+    return [
         (idx, path, length)
         for idx, (path, length) in enumerate(files)
         if Path(path).suffix.lower() in VIDEO_EXTS and "sample" not in path.lower()
     ]
-    return max(candidates, key=lambda c: c[2], default=None)
 
 
 def count_have(bitfield: bytes, first: int, last: int) -> int:
@@ -99,7 +90,23 @@ def read_info(folder: Path) -> dict:
     return meta.get(b"info", meta)
 
 
-def scan_entry(folder: Path) -> CacheEntry | Skipped:
+def pick_files(files: list[tuple[str, int]]) -> tuple[str, list[tuple[int, str, int]]] | str:
+    """(kind, videos to sync) for a torrent, or why it's skipped."""
+    videos = video_files(files)
+    if not videos:
+        return "no video file in torrent"
+    episodes = [v for v in videos if EPISODE_PATTERN.search(v[1].split("/")[-1])]
+    if episodes:
+        return EPISODE, episodes  # anything else in a season pack (extras, specials) is left alone
+    if any(SERIES_PATTERN.search(v[1]) for v in videos):
+        return "looks like a series but has no episode numbers, skipping"
+    if len(videos) > 1:
+        return "several video files and no episode numbers, skipping"
+    return MOVIE, videos
+
+
+def scan_folder(folder: Path) -> list[CacheEntry] | Skipped:
+    """The movie, or the streamed episodes, in one cache folder."""
     cache, bitfield_path = folder / "cache", folder / "bitfield"
     if not cache.is_file():
         return Skipped(folder.name, "no cache metadata")
@@ -113,33 +120,44 @@ def scan_entry(folder: Path) -> CacheEntry | Skipped:
     except (ValueError, KeyError, TypeError, IndexError, AttributeError) as e:
         return Skipped(folder.name, f"unreadable metadata ({e!r})")
 
-    if looks_like_series(files):
-        return Skipped(folder.name, "looks like a series, skipping")
+    picked = pick_files(files)
+    if isinstance(picked, str):
+        return Skipped(folder.name, picked)
+    kind, videos = picked
 
-    movie = pick_movie(files)
-    if movie is None:
-        return Skipped(folder.name, "no video file in torrent")
-    idx, path, length = movie
+    # Stremio only creates a data file for what was streamed, so unwatched episodes have none.
+    present = [v for v in videos if (folder / str(v[0])).is_file()]
+    if not present:
+        what = f"file #{videos[0][0]}" if kind == MOVIE else "no streamed episode"
+        return Skipped(folder.name, f"{what} not in cache")
 
-    data_file = folder / str(idx)
-    if not data_file.is_file():
-        return Skipped(folder.name, f"file #{idx} not in cache")
+    bitfield = bitfield_path.read_bytes()
+    return [make_entry(folder, files, v, piece_len, bitfield, kind) for v in present]
 
+
+def make_entry(folder: Path, files: list[tuple[str, int]], video: tuple[int, str, int],
+               piece_len: int, bitfield: bytes, kind: str) -> CacheEntry:
+    idx, path, length = video
     # Only the pieces overlapping this file matter; Stremio skips the torrent's other files.
     offset = sum(l for _, l in files[:idx])
     first = offset // piece_len
     last = (offset + length - 1) // piece_len
-
     return CacheEntry(
         infohash=folder.name,
         index=idx,
-        src=data_file,
+        src=folder / str(idx),
         name=path.split("/")[-1],
         size=length,
-        have=count_have(bitfield_path.read_bytes(), first, last),
+        have=count_have(bitfield, first, last),
         total=last - first + 1,
+        kind=kind,
     )
 
 
 def scan_cache(cache_dir: Path) -> list[CacheEntry | Skipped]:
-    return [scan_entry(p) for p in sorted(cache_dir.iterdir()) if p.is_dir()]
+    items = []
+    for p in sorted(cache_dir.iterdir()):
+        if p.is_dir():
+            found = scan_folder(p)
+            items += found if isinstance(found, list) else [found]
+    return items
