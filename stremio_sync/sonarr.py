@@ -16,6 +16,8 @@ class SonarrError(ArrError):
 
 
 def _norm(title: str) -> str:
+    # Sonarr tells same-named shows apart as "Doctor Who (2005)"; the year is compared separately.
+    title = re.sub(r"\s*\(\d{4}\)$", "", title)
     return re.sub(r"[^a-z0-9]", "", title.lower())
 
 
@@ -39,7 +41,8 @@ class Sonarr(ArrClient):
             return parsed["series"], self.episodes(parsed["series"], info, parsed.get("episodes")), False
 
         title_info = info.get("seriesTitleInfo") or {}
-        title = title_info.get("title") or info.get("seriesTitle")
+        # "title" keeps the year from the file name ("Show 2005"), which no lookup result is called.
+        title = title_info.get("titleWithoutYear") or title_info.get("title") or info.get("seriesTitle")
         year = title_info.get("year") or 0
         if not title:
             raise NoMatch("couldn't read a series title from the file name")
