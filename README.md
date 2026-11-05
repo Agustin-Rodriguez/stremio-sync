@@ -27,7 +27,20 @@ cache instead of running on a timer:
 - Show downloads has a **Movies** and a **Series** tab, each with two tabs of its own.
   **In progress** lists what the app is doing with each file (downloading, checking, waiting,
   sending, waiting for Radarr/Sonarr) and refreshes every 2 s; **Sent** lists what's been sent
-  and whether it was imported.
+  and whether it was imported. The **Add** tab downloads pasted links, see below.
+
+## Adding downloads
+Paste a link in Show downloads → **Add** and Stremio downloads it without the player open.
+From there it goes like anything you'd watched: staged, checked, sent, imported.
+- Links: a Stremio stream link (`http://127.0.0.1:11470/<hash>/<file>`, copy it from the
+  player), a magnet, or an info hash. A season pack downloads every episode.
+- Stremio (the desktop app) has to be open, since its streaming server does the downloading.
+  If you close it, downloads wait and continue from where they were once you open it again.
+  Quitting the tray app is fine too: the list is kept in `fetches.json`.
+- `[stremio] max_downloads` (default 3) is how many download at once; the rest wait their turn.
+  Stremio caps each torrent's speed, so you can watch something else meanwhile.
+- Set the cache size to ∞ in Stremio's settings, so it doesn't evict half-downloaded files.
+- Stop watching pauses these downloads too; Pause sending doesn't.
 
 Turn on "Start at login" and delete the Task Scheduler task, if you had one.
 The log is `sync.log` next to `config.toml` unless you pass `--log`.
@@ -53,8 +66,9 @@ The log gets only what was sent or imported, and any problems.
 | `stremio_sync/sonarr.py` | Sonarr API: add series, import episodes from incoming |
 | `stremio_sync/tray.py` | Tray icon and menu |
 | `stremio_sync/engine.py` | Tray app worker: watch, stage, verify, send, import |
+| `stremio_sync/fetch.py` | Add tab: has Stremio's server download pasted links |
 | `stremio_sync/progress.py` | What the worker is doing with each file, for the In progress tabs |
 | `stremio_sync/staging.py` | Hard links that keep files safe from Stremio's cache cleanup |
 | `stremio_sync/verify.py` | Checks a file against the torrent's piece hashes |
-| `stremio_sync/window.py` | "Show downloads" window (Movies and Series; In progress, Sent) |
+| `stremio_sync/window.py` | "Show downloads" window (Movies and Series; In progress, Sent; Add) |
 | `stremio_sync/autostart.py` | Start at login (registry Run key) |

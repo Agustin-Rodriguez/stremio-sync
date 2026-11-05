@@ -34,6 +34,8 @@ class Config:
     staging_dir: Path | None  # tray app's hard links; None = next to the cache folder
     radarr: ArrConfig | None  # None = skip the import step
     sonarr: ArrConfig | None
+    stremio_server: str       # Stremio's streaming server, for links pasted in the Add tab
+    max_downloads: int        # pasted links downloading at once
 
     def dest_for(self, entry: CacheEntry) -> str | None:
         """Where on the server an entry goes. None = we don't sync its kind."""
@@ -65,7 +67,15 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
         staging_dir=Path(staging["dir"]) if staging.get("dir") else None,
         radarr=_arr(raw.get("radarr", {}), "http://localhost:7878"),
         sonarr=_arr(raw.get("sonarr", {}), "http://localhost:8989"),
+        stremio_server=stremio.get("server", "http://127.0.0.1:11470").rstrip("/"),
+        max_downloads=_max_downloads(stremio.get("max_downloads", 2)),
     )
+
+
+def _max_downloads(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(f"[stremio] max_downloads must be a whole number, 1 or more (got {value!r})")
+    return value
 
 
 def _arr(section: dict, default_url: str) -> ArrConfig | None:

@@ -11,6 +11,7 @@ from watchdog.observers import Observer
 
 from .cache import MOVIE, CacheEntry, Skipped, read_info, scan_folder
 from .config import Config
+from .fetch import Fetcher
 from .pipeline import fmt_duration, import_all, send_one
 from .progress import CHECKING, DAMAGED, DOWNLOADING, IMPORTING, UPLOADING, WAITING, Progress
 from .staging import Staging, StagingError, default_staging_dir
@@ -59,6 +60,8 @@ class Engine:
         self._wake = threading.Event()
         self._quit = threading.Event()
         self._observer = None
+        self.fetcher = Fetcher(cfg, cfg.state_file.with_name("fetches.json"),
+                               on_fetched=lambda infohash: self.changed(str(cfg.cache_dir / infohash)))
         self._thread = threading.Thread(target=self._loop, name="engine", daemon=True)
 
     # --- called from the tray (any thread) ---
@@ -66,9 +69,11 @@ class Engine:
     def start(self):
         self._start_watching()
         self._thread.start()
+        self.fetcher.start()
 
     def stop(self):
         """Quit after the current step. Blocks until the worker has exited."""
+        self.fetcher.stop()
         self._quit.set()
         self._wake.set()
         self._stop_watching()
@@ -84,6 +89,7 @@ class Engine:
             self._start_watching()
             self._full_scan = True
         self.mode = mode
+        self.fetcher.hold(mode == STOPPED)  # nothing would pick up what it downloads
         self._wake.set()
 
     def sync_now(self):

@@ -77,7 +77,7 @@ def main(cfg: Config, config_path: Path, log_file: Path):
         nonlocal window
         if window is None or not window.exists():
             window = DownloadsWindow(root, cfg.state_file, lambda: engine.status[1], engine.progress,
-                                     series_on=cfg.server_series_incoming is not None)
+                                     engine.fetcher, series_on=cfg.server_series_incoming is not None)
         window.show()
 
     def toggle_autostart():

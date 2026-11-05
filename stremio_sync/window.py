@@ -1,4 +1,4 @@
-"""The "Show downloads" window: movies and series, each with what's in progress and what's been sent."""
+"""The "Show downloads" window: movies and series (in progress, sent), and an Add tab for pasted links."""
 
 import tkinter as tk
 from pathlib import Path
@@ -6,9 +6,11 @@ from tkinter import ttk
 from typing import Callable
 
 from .cache import EPISODE, MOVIE
+from .fetch import FINISHED, QUEUED, FetchError, Fetcher
 from .state import SentLog
 
 REFRESH_MS = 2000
+ADD_HINT = "Paste a Stremio stream link or a magnet. Stremio has to be open while it downloads."
 
 
 def sent_columns(title: str):
@@ -17,6 +19,22 @@ def sent_columns(title: str):
 
 def progress_columns(title: str):
     return (("name", title, 460), ("size", "Size", 80), ("state", "State", 230), ("progress", "Progress", 80))
+
+
+ADD_COLUMNS = (("name", "Name", 400), ("size", "Size", 80), ("state", "State", 250), ("progress", "Progress", 130))
+
+
+def fill_in_place(tree: ttk.Treeview, rows: list[dict], values: Callable[[dict], tuple]):
+    """Update rows in place, so the 2 s refresh keeps the selection and scroll position."""
+    gone = set(tree.get_children()) - {r["key"] for r in rows}
+    if gone:
+        tree.delete(*gone)
+    for i, r in enumerate(rows):
+        if tree.exists(r["key"]):
+            tree.item(r["key"], values=values(r))
+            tree.move(r["key"], "", i)
+        else:
+            tree.insert("", i, iid=r["key"], values=values(r))
 
 
 class Section:
@@ -43,17 +61,7 @@ class Section:
         self.show_sent()
 
     def load_progress(self, rows: list[dict]):
-        """Update rows in place, so the 2 s refresh keeps the selection and scroll position."""
-        gone = set(self.active.get_children()) - {r["key"] for r in rows}
-        if gone:
-            self.active.delete(*gone)
-        for i, r in enumerate(rows):
-            values = (r["name"], _gb(r["size"]), r["state"], r["progress"])
-            if self.active.exists(r["key"]):
-                self.active.item(r["key"], values=values)
-                self.active.move(r["key"], "", i)
-            else:
-                self.active.insert("", i, iid=r["key"], values=values)
+        fill_in_place(self.active, rows, lambda r: (r["name"], _gb(r["size"]), r["state"], r["progress"]))
         if rows:
             self.empty.place_forget()
         else:
@@ -81,9 +89,71 @@ class Section:
             ))
 
 
+class AddTab:
+    """Paste a link to have Stremio download it; lists what was pasted and how it's going."""
+
+    def __init__(self, window: "DownloadsWindow", parent: ttk.Notebook, fetcher: Fetcher):
+        self.fetcher = fetcher
+        self.counts = ""
+        pad = window.px(4)
+        self.frame = ttk.Frame(parent)
+        self.frame.columnconfigure(0, weight=1)
+        self.frame.rowconfigure(2, weight=1)
+
+        bar = ttk.Frame(self.frame)
+        bar.grid(row=0, column=0, sticky="ew", padx=pad, pady=(pad, 0))
+        bar.columnconfigure(0, weight=1)
+        self.link = tk.StringVar()
+        entry = ttk.Entry(bar, textvariable=self.link)
+        entry.grid(row=0, column=0, sticky="ew")
+        entry.bind("<Return>", lambda _: self.add())
+        ttk.Button(bar, text="Download", command=self.add).grid(row=0, column=1, padx=(pad, 0))
+        self.message = ttk.Label(self.frame, text=ADD_HINT)
+        self.message.grid(row=1, column=0, sticky="w", padx=pad, pady=pad)
+
+        table, self.tree = window.table(self.frame, ADD_COLUMNS)
+        table.grid(row=2, column=0, sticky="nsew", padx=pad)
+        self.empty = ttk.Label(table, text="Nothing added")
+
+        buttons = ttk.Frame(self.frame)
+        buttons.grid(row=3, column=0, sticky="ew", padx=pad, pady=pad)
+        ttk.Button(buttons, text="Clear finished", command=self.clear).pack(side="right")
+        ttk.Button(buttons, text="Cancel", command=self.cancel).pack(side="right", padx=(0, pad))
+
+    def add(self):
+        try:
+            self.fetcher.add(self.link.get())
+        except FetchError as e:
+            self.message.config(text=f"Can't add that: {e}.")
+            return
+        self.link.set("")
+        self.message.config(text=ADD_HINT)
+        self.load()
+
+    def cancel(self):
+        for key in self.tree.selection():
+            self.fetcher.cancel(key)
+        self.load()
+
+    def clear(self):
+        self.fetcher.clear_finished()
+        self.load()
+
+    def load(self):
+        rows = self.fetcher.snapshot()
+        fill_in_place(self.tree, rows, lambda r: (r["name"], _gb(r["size"]), r["state"], r["progress"]))
+        queued = sum(1 for r in rows if r["phase"] == QUEUED)
+        active = sum(1 for r in rows if r["phase"] not in FINISHED) - queued
+        self.counts = f"{active} downloading, {queued} queued."
+        if rows:
+            self.empty.place_forget()
+        else:
+            self.empty.place(relx=0.5, rely=0.5, anchor="center")
+
+
 class DownloadsWindow:
     def __init__(self, root: tk.Tk, state_file: Path, status: Callable[[], str],
-                 progress: Callable[[], list[dict]], series_on: bool):
+                 progress: Callable[[], list[dict]], fetcher: Fetcher, series_on: bool):
         self.state_file = state_file
         self.status = status
         self.progress = progress
@@ -107,8 +177,11 @@ class DownloadsWindow:
             MOVIE: Section(self, self.tabs, "Movie", "Nothing in progress"),
             EPISODE: Section(self, self.tabs, "Episode", series_empty),
         }
+        self.add_tab = AddTab(self, self.tabs, fetcher)
         self.tabs.add(self.sections[MOVIE].frame, text="Movies")
         self.tabs.add(self.sections[EPISODE].frame, text="Series")
+        self.tabs.add(self.add_tab.frame, text="Add")
+        self.pages = [self.sections[MOVIE], self.sections[EPISODE], self.add_tab]  # in tab order
         self.tabs.bind("<<NotebookTabChanged>>", lambda _: self.show_status())
 
         bar = ttk.Frame(self.win)
@@ -164,13 +237,14 @@ class DownloadsWindow:
         self.win.after(REFRESH_MS, self.tick)
 
     def show_status(self):
-        current = self.sections[EPISODE if self.tabs.index("current") == 1 else MOVIE]
+        current = self.pages[self.tabs.index("current")]
         self.status_label.config(text=f"{current.counts}  {self.status()}")
 
     def load_progress(self):
         rows = self.progress()
         for kind, section in self.sections.items():
             section.load_progress([r for r in rows if r["kind"] == kind])
+        self.add_tab.load()
 
     def load_sent(self):
         self.sent_mtime = _mtime(self.state_file)

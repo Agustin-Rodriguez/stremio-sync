@@ -11,6 +11,10 @@ incoming = "/mnt/media_1/incoming"      # incoming folder for movies, as the ser
 # Leave commented out to use Stremio's default location.
 # Single quotes = Windows backslashes are taken literally.
 # cache_dir = 'D:\StremioCache\stremio-cache'
+# Tray app's Add tab: Stremio's streaming server (part of the desktop app), and how many
+# pasted links download at once.
+server = "http://127.0.0.1:11470"
+max_downloads = 2
 
 [staging]
 # Tray app only: where it keeps hard links to files until Radarr/Sonarr imports them,

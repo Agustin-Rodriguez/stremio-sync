@@ -1,5 +1,7 @@
 config.toml
 sent.json
 sent.tmp
+fetches.json
+fetches.tmp
 *.log
 __pycache__/
