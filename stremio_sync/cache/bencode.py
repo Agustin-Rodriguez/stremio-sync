@@ -27,6 +27,8 @@ def bdecode(data: bytes):
             colon = data.index(b":", i)
             start = colon + 1
             n = int(data[i:colon])
+            if start + n > len(data):
+                raise ValueError(f"string at byte {i} runs past the end")
             return data[start:start + n], start + n
         raise ValueError(f"bad bencode at byte {i}")
 

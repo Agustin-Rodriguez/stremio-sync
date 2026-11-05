@@ -5,3 +5,5 @@ fetches.json
 fetches.tmp
 *.log
 __pycache__/
+.pytest_cache/
+.venv/

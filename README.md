@@ -37,7 +37,7 @@ From there it goes like anything you'd watched: staged, checked, sent, imported.
 - Stremio (the desktop app) has to be open, since its streaming server does the downloading.
   If you close it, downloads wait and continue from where they were once you open it again.
   Quitting the tray app is fine too: the list is kept in `fetches.json`.
-- `[stremio] max_downloads` (default 3) is how many download at once; the rest wait their turn.
+- `[stremio] max_downloads` (default 2) is how many download at once; the rest wait their turn.
   Stremio caps each torrent's speed, so you can watch something else meanwhile.
 - Set the cache size to ∞ in Stremio's settings, so it doesn't evict half-downloaded files.
 - Stop watching pauses these downloads too; Pause sending doesn't.
@@ -85,4 +85,18 @@ stremio_sync/
     media_tab.py         Movies and Series tabs (In progress, Sent)
     add_tab.py           Add tab
     common.py            Table building and cell formatting the tabs share
+tests/                   pytest suite, laid out like stremio_sync/
+  helpers.py             Builds fake Stremio cache folders (torrent metadata, bitfield, data)
+  fakes.py               Stand-ins for Stremio's server, Radarr/Sonarr, ssh/scp, the clock, threads
+tools/
+  preview_window.py      Opens the downloads window with made-up data
 ```
+
+## Testing
+`py -m pip install -r requirements-dev.txt`, then `py -m pytest`. Runs on Windows, macOS and Linux.
+Nothing reaches the network or runs ssh: Stremio, Radarr, Sonarr and the server are faked, and a
+test that tries to go out fails.
+
+To see the downloads window without the tray app (or without Windows), run
+`py tools/preview_window.py`. It's the real window filled with made-up rows; `--tab add`,
+`--no-series` and `--empty` show other states. On macOS with Homebrew Python, tkinter needs `brew install python-tk@3.13` first.
