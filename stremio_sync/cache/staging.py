@@ -6,7 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .cache import CacheEntry, scan_folder
+from .scan import CacheEntry, scan_folder
 
 log = logging.getLogger(__name__)
 

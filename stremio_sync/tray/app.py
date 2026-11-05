@@ -12,9 +12,9 @@ import pystray
 from PIL import Image, ImageDraw
 
 from . import autostart
-from .config import PROJECT_DIR, Config
+from ..config import PROJECT_DIR, Config
 from .engine import BUSY, ERROR, PAUSE_SENDING, RUNNING, SENDING, STOPPED, Engine
-from .window import DownloadsWindow
+from ..window import DownloadsWindow
 
 log = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from .cache import CacheEntry
+from .cache.scan import CacheEntry
 
 
 def now() -> str:

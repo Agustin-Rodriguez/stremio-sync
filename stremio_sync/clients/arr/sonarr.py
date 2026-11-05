@@ -4,7 +4,7 @@ import logging
 import re
 import time
 
-from .arr import ArrClient, ArrError, NoMatch
+from .base import ArrClient, ArrError, NoMatch
 
 log = logging.getLogger(__name__)
 

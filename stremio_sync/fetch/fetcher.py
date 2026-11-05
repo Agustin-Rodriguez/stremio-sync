@@ -1,23 +1,22 @@
 """Pasted stream links and magnets: Stremio's server downloads them into its cache, no player needed."""
 
-import base64
 import json
 import logging
 import os
-import re
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .cache import EPISODE, pick_files, scan_folder
-from .config import Config
-from .state import now
+from ..cache.scan import scan_folder
+from ..clients.stremio_server import ServerDown, StremioError, StremioServer
+from ..config import Config
+from ..state import now
+from .errors import FetchError, Unsendable
+from .links import Link, choose_files, parse_link
+from .states import DONE, DOWNLOADING, FAILED, FINISHED, INFO, QUEUED, SAVED, shown
 
 log = logging.getLogger(__name__)
 
@@ -25,135 +24,6 @@ CHECK_EVERY = 5       # seconds between looks at each download
 INFO_TIMEOUT = 600    # the torrent's info must arrive within this long, counting only time Stremio is up
 STALLED_AFTER = 300   # no progress for this long: say so
 REOPEN_AFTER = 600    # and for this long: open the file again, in case Stremio dropped it
-TIMEOUT = 30          # per request; opening a file can wait for peers, so it gets longer
-OPEN_TIMEOUT = 120
-
-# Saved states. What the Add tab shows is worked out from these plus what's happening now.
-QUEUED, INFO, DOWNLOADING, DONE, FAILED = "queued", "info", "downloading", "done", "failed"
-FINISHED = (DONE, FAILED)
-SAVED = ("id", "link", "infohash", "index", "name", "size", "kind", "files", "done_files",
-         "state", "error", "added_at")
-
-HEX_HASH = re.compile(r"[0-9a-fA-F]{40}")
-STREAM_LINK = re.compile(r"^https?://[^/]+/([0-9a-fA-F]{40})/(\d+)(?:[/?#]|$)")
-
-
-class FetchError(Exception):
-    pass
-
-
-class ServerDown(FetchError):
-    """Stremio isn't running (its server refuses connections)."""
-
-
-class Unsendable(FetchError):
-    """The torrent has nothing stremio-sync would send, so downloading it is pointless."""
-
-
-@dataclass(frozen=True)
-class Link:
-    infohash: str
-    index: int | None              # file within the torrent; None = work it out from the file list
-    trackers: tuple[str, ...] = ()
-    name: str | None = None        # a magnet's dn, until the torrent's info arrives
-
-
-def parse_link(text: str) -> Link:
-    """A Stremio stream link, a magnet or a bare info hash. Raises FetchError."""
-    text = text.strip()
-    match = STREAM_LINK.match(text)
-    if match:
-        return Link(match[1].lower(), int(match[2]))
-    if text.lower().startswith("magnet:?"):
-        params = urllib.parse.parse_qs(text[len("magnet:?"):])
-        for xt in params.get("xt", []):
-            if xt.lower().startswith("urn:btih:"):
-                return Link(_hex_hash(xt[len("urn:btih:"):]), None, tuple(params.get("tr", [])),
-                            params.get("dn", [None])[0])
-    if HEX_HASH.fullmatch(text):
-        return Link(text.lower(), None)
-    raise FetchError("not a Stremio stream link or magnet")
-
-
-def _hex_hash(h: str) -> str:
-    if HEX_HASH.fullmatch(h):
-        return h.lower()
-    if re.fullmatch(r"[A-Za-z2-7]{32}", h):
-        return base64.b32decode(h.upper()).hex()
-    raise FetchError("the magnet's info hash is unreadable")
-
-
-def choose_files(link: Link, files: list[tuple[str, int]], series_on: bool) -> tuple[str, list[tuple[int, str, int]]]:
-    """(kind, videos to download), by the same rules as the cache scan. Raises Unsendable."""
-    picked = pick_files(files)
-    if isinstance(picked, str):
-        raise Unsendable(picked)
-    kind, videos = picked
-    if kind == EPISODE and not series_on:
-        raise Unsendable("series syncing is off ([server] series_incoming)")
-    if link.index is not None:
-        videos = [v for v in videos if v[0] == link.index]
-        if not videos:
-            raise Unsendable("that file isn't a movie or episode stremio-sync sends")
-    return kind, videos
-
-
-class StremioServer:
-    """The HTTP API of Stremio's streaming server, the part of the app that downloads torrents."""
-
-    def __init__(self, url: str):
-        self.url = url.rstrip("/")
-
-    def create(self, link: Link) -> dict:
-        """Start the torrent (or get the running one). Its `files` appear once the info arrives."""
-        sources = [f"dht:{link.infohash}"] + [f"tracker:{t}" for t in link.trackers]
-        return self._json(f"/{link.infohash}/create", {
-            "torrent": {"infoHash": link.infohash},
-            "peerSearch": {"sources": sources, "min": 40, "max": 150},
-        })
-
-    def select(self, infohash: str, idx: int):
-        """Open the file and read a little. From then on Stremio downloads all of it by itself."""
-        with self._open(f"/{infohash}/{idx}", timeout=OPEN_TIMEOUT) as resp:
-            resp.read(1 << 16)
-
-    def progress(self, infohash: str, idx: int) -> float:
-        """How much of the file is downloaded, 0 to 1."""
-        return float(self._json(f"/{infohash}/{idx}/stats.json").get("streamProgress") or 0)
-
-    def active(self) -> set[str]:
-        """Info hashes of the torrents the server is running."""
-        stats = self._json("/stats.json")
-        return set(stats) if isinstance(stats, dict) else set()
-
-    def cache_root(self) -> Path | None:
-        root = self._json("/settings").get("values", {}).get("cacheRoot")
-        return Path(root) if root else None
-
-    def _json(self, path: str, body: dict | None = None):
-        with self._open(path, body) as resp:
-            raw = resp.read()
-        try:
-            return json.loads(raw) if raw else {}
-        except ValueError as e:
-            raise FetchError(f"unexpected reply from Stremio for {path}") from e
-
-    def _open(self, path: str, body: dict | None = None, timeout: float = TIMEOUT):
-        data = json.dumps(body).encode() if body is not None else None
-        headers = {"Content-Type": "application/json"} if data else {}
-        req = urllib.request.Request(self.url + path, data=data, headers=headers)
-        try:
-            return urllib.request.urlopen(req, timeout=timeout)
-        except urllib.error.HTTPError as e:
-            raise FetchError(f"Stremio answered {e.code} for {path}") from e
-        except urllib.error.URLError as e:
-            if isinstance(e.reason, ConnectionError):
-                raise ServerDown(f"can't reach Stremio at {self.url}") from e
-            raise FetchError(f"Stremio didn't answer ({e.reason})") from e
-        except ConnectionError as e:
-            raise ServerDown(f"can't reach Stremio at {self.url}") from e
-        except OSError as e:  # timeouts
-            raise FetchError(f"Stremio didn't answer ({e})") from e
 
 
 @dataclass
@@ -247,7 +117,7 @@ class Fetcher:
             recs = [dict(r) for r in self._recs.values()]
         held = self._held.is_set()
         return [{"key": r["id"], "name": r["name"], "size": r["size"], "phase": r["state"],
-                 **_shown(r, held)} for r in recs]
+                 **shown(r, held)} for r in recs]
 
     # --- bookkeeping (call with the lock held) ---
 
@@ -337,14 +207,14 @@ class Fetcher:
                 self._set(fid, down=True)
                 info_since = time.monotonic()  # waiting for the app to open doesn't count
                 watch.index = None             # open the file again once it's back
-            except FetchError as e:
+            except (StremioError, FetchError) as e:
                 log.debug("Download %s: %s", fid, e)
                 self._set(fid, down=False, note=str(e))
             stop.wait(CHECK_EVERY)
 
     def _get_files(self, fid: str, link: Link) -> list | None:
         """Start the torrent and pick its files, or None while its info hasn't arrived."""
-        stats = self.server.create(link)
+        stats = self.server.create(link.infohash, link.trackers)
         raw = stats.get("files")
         if not raw:
             return None
@@ -373,7 +243,7 @@ class Fetcher:
         t = time.monotonic()
         if watch.index != idx or link.infohash not in self.server.active():
             # A new file, or Stremio was restarted and forgot the torrent. The cache keeps what's done.
-            self.server.create(link)
+            self.server.create(link.infohash, link.trackers)
             self._open_file(link.infohash, idx)
             watch.index, watch.progress, watch.moved, watch.opened, watch.bytes, watch.at = idx, 0.0, t, t, 0, t
         progress = self.server.progress(link.infohash, idx)
@@ -402,7 +272,7 @@ class Fetcher:
         def run():
             try:
                 self.server.select(infohash, idx)
-            except FetchError as e:
+            except StremioError as e:
                 log.debug("Opening %s/%d: %s", infohash[:12], idx, e)
         threading.Thread(target=run, name="fetch-open", daemon=True).start()
 
@@ -421,7 +291,7 @@ class Fetcher:
             return
         try:
             root = self.server.cache_root()
-        except FetchError:
+        except StremioError:
             return
         self._root_checked = True
         if root is None:
@@ -431,32 +301,3 @@ class Fetcher:
             log.warning("\nStremio keeps its cache in %s, but stremio-sync watches %s. "
                         "Set [stremio] cache_dir in config.toml.", theirs, self.cfg.cache_dir)
 
-
-def _shown(rec: dict, held: bool) -> dict:
-    """The State and Progress columns."""
-    state = rec["state"]
-    if state == QUEUED:
-        return {"state": "Queued", "progress": ""}
-    if state == DONE:
-        return {"state": "Done", "progress": "100%"}
-    if state == FAILED:
-        return {"state": f"Failed: {rec['error']}", "progress": ""}
-    progress = ""
-    if rec.get("done_bytes") is not None and rec.get("size"):
-        progress = f"{rec['done_bytes'] * 100 // rec['size']}%"  # rounded down, so 99.7% doesn't read as done
-        if rec.get("speed"):
-            progress += f"  {rec['speed'] / 1e6:.1f} MB/s"
-    if held:
-        text = "Paused"
-    elif rec.get("down"):
-        text = "Waiting for Stremio to open"
-    elif state == INFO:
-        text = "Getting torrent info"
-    elif rec.get("stalled"):
-        text = "Stalled, no peers sending"
-    else:
-        n, total = rec.get("part") or (1, 1)
-        text = f"Downloading episode {n} of {total}" if total > 1 else "Downloading"
-    if rec.get("note") and not rec.get("down"):
-        text += f" (retrying: {rec['note']})"
-    return {"state": text, "progress": progress}

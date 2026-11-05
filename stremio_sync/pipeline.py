@@ -3,12 +3,12 @@
 import logging
 import time
 
-from .cache import EPISODE, MOVIE, CacheEntry, Skipped, scan_cache
+from .cache.scan import EPISODE, MOVIE, CacheEntry, Skipped, scan_cache
 from .config import Config
-from .radarr import Radarr, RadarrError
-from .sonarr import Sonarr, SonarrError
+from .clients.arr.radarr import Radarr, RadarrError
+from .clients.arr.sonarr import Sonarr, SonarrError
 from .state import SentLog
-from .transfer import TransferError, send
+from .clients.home_server import TransferError, send
 
 log = logging.getLogger(__name__)
 

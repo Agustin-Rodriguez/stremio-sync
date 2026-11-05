@@ -3,8 +3,8 @@
 import threading
 import time
 
-from .cache import MOVIE, CacheEntry
-from .pipeline import fmt_duration
+from ..cache.scan import MOVIE, CacheEntry
+from ..pipeline import fmt_duration
 
 STALLED_AFTER = 600  # seconds since Stremio last wrote to a partial download
 

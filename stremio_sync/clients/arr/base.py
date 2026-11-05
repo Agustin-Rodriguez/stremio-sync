@@ -6,10 +6,19 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-
-from .config import ArrConfig
+from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ArrConfig:
+    """Radarr or Sonarr."""
+    url: str
+    api_key: str
+    incoming: str             # incoming folder as Radarr/Sonarr sees it (inside Docker)
+    quality_profile: str | None
+    monitor_new: bool
 
 
 class ArrError(Exception):

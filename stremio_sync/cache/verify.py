@@ -2,7 +2,7 @@
 
 import hashlib
 
-from .cache import CacheEntry, torrent_files
+from .scan import CacheEntry, torrent_files
 
 
 def verify(entry: CacheEntry, info: dict) -> bool:

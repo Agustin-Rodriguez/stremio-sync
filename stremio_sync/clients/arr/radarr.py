@@ -2,7 +2,7 @@
 
 import logging
 
-from .arr import ArrClient, ArrError, NoMatch
+from .base import ArrClient, ArrError, NoMatch
 
 log = logging.getLogger(__name__)
 

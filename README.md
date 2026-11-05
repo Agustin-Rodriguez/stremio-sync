@@ -51,24 +51,38 @@ Task Scheduler action: program `pythonw.exe`, arguments
 The log gets only what was sent or imported, and any problems.
 
 ## Layout
-| File | What it does |
-|---|---|
-| `sync.py` | Entry point |
-| `stremio_sync/cli.py` | Arguments, logging setup |
-| `stremio_sync/config.py` | Loads `config.toml` |
-| `stremio_sync/pipeline.py` | One full pass: scan, send, import |
-| `stremio_sync/cache.py` | Reads Stremio's cache, checks which movies and episodes are complete |
-| `stremio_sync/bencode.py` | Decodes torrent metadata |
-| `stremio_sync/state.py` | `sent.json`: what's already been sent |
-| `stremio_sync/transfer.py` | ssh/scp upload to the server |
-| `stremio_sync/arr.py` | What the Radarr and Sonarr clients share |
-| `stremio_sync/radarr.py` | Radarr API: add movies, import from incoming |
-| `stremio_sync/sonarr.py` | Sonarr API: add series, import episodes from incoming |
-| `stremio_sync/tray.py` | Tray icon and menu |
-| `stremio_sync/engine.py` | Tray app worker: watch, stage, verify, send, import |
-| `stremio_sync/fetch.py` | Add tab: has Stremio's server download pasted links |
-| `stremio_sync/progress.py` | What the worker is doing with each file, for the In progress tabs |
-| `stremio_sync/staging.py` | Hard links that keep files safe from Stremio's cache cleanup |
-| `stremio_sync/verify.py` | Checks a file against the torrent's piece hashes |
-| `stremio_sync/window.py` | "Show downloads" window (Movies and Series; In progress, Sent; Add) |
-| `stremio_sync/autostart.py` | Start at login (registry Run key) |
+```
+sync.py                  Entry point
+stremio_sync/
+  cli.py                 Arguments, logging setup
+  config.py              Loads config.toml
+  pipeline.py            One full pass: scan, send, import
+  state.py               sent.json: what's already been sent
+  cache/                 Stremio's cache
+    scan.py              Reads it, checks which movies and episodes are complete
+    bencode.py           Decodes torrent metadata
+    verify.py            Checks a file against the torrent's piece hashes
+    staging.py           Hard links that keep files safe from Stremio's cache cleanup
+  clients/               Other programs stremio-sync talks to
+    stremio_server.py    Stremio's streaming server API (downloads torrents)
+    home_server.py       ssh/scp upload to the home server
+    arr/
+      base.py            What the Radarr and Sonarr clients share
+      radarr.py          Radarr API: add movies, import from incoming
+      sonarr.py          Sonarr API: add series, import episodes from incoming
+  fetch/                 Add tab: has Stremio's server download pasted links
+    fetcher.py           The download list and its threads (fetches.json)
+    links.py             Reads stream links and magnets, picks which files to download
+    states.py            A download's saved states and how they're shown
+    errors.py            Why a link can't be downloaded
+  tray/                  The tray app
+    app.py               Tray icon and menu
+    engine.py            Worker: watch, stage, verify, send, import
+    progress.py          What the worker is doing with each file, for the In progress tabs
+    autostart.py         Start at login (Windows registry)
+  window/                "Show downloads" window
+    window.py            The window: tabs, status bar, refresh
+    media_tab.py         Movies and Series tabs (In progress, Sent)
+    add_tab.py           Add tab
+    common.py            Table building and cell formatting the tabs share
+```

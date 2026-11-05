@@ -5,7 +5,7 @@ import shlex
 import subprocess
 import sys
 
-from .cache import CacheEntry
+from ..cache.scan import CacheEntry
 
 # BatchMode: fail instead of prompting for a password (important when nobody's watching).
 # ServerAlive*: if the server stops answering for ~60s, give up instead of hanging forever.

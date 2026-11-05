@@ -9,14 +9,14 @@ from typing import Callable
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from .cache import MOVIE, CacheEntry, Skipped, read_info, scan_folder
-from .config import Config
-from .fetch import Fetcher
-from .pipeline import fmt_duration, import_all, send_one
+from ..cache.scan import MOVIE, CacheEntry, Skipped, read_info, scan_folder
+from ..config import Config
+from ..fetch import Fetcher
+from ..pipeline import fmt_duration, import_all, send_one
 from .progress import CHECKING, DAMAGED, DOWNLOADING, IMPORTING, UPLOADING, WAITING, Progress
-from .staging import Staging, StagingError, default_staging_dir
-from .state import SentLog
-from .verify import verify
+from ..cache.staging import Staging, StagingError, default_staging_dir
+from ..state import SentLog
+from ..cache.verify import verify
 
 log = logging.getLogger(__name__)
 

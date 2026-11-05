@@ -4,7 +4,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from .cache import MOVIE, CacheEntry, default_cache_dir
+from .cache.scan import MOVIE, CacheEntry, default_cache_dir
+from .clients.arr.base import ArrConfig
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = PROJECT_DIR / "config.toml"
@@ -12,16 +13,6 @@ CONFIG_FILE = PROJECT_DIR / "config.toml"
 
 class ConfigError(Exception):
     pass
-
-
-@dataclass(frozen=True)
-class ArrConfig:
-    """Radarr or Sonarr."""
-    url: str
-    api_key: str
-    incoming: str             # incoming folder as Radarr/Sonarr sees it (inside Docker)
-    quality_profile: str | None
-    monitor_new: bool
 
 
 @dataclass(frozen=True)
